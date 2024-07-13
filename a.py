@@ -1,13 +1,28 @@
 import os
 import logging
-from telegram import Update, Bot, ParseMode
+import requests
+from telegram import Update, ParseMode
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from googleapiclient.discovery import build
-import requests
 from bs4 import BeautifulSoup
 import random
 from datetime import datetime
 from dateutil import parser
+import subprocess
+import sys
+
+def install_and_import(package):
+    try:
+        __import__(package)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+    finally:
+        globals()[package] = __import__(package)
+
+# Install and import required packages
+packages = ["requests", "python-telegram-bot", "google-api-python-client", "beautifulsoup4", "python-dateutil"]
+for package in packages:
+    install_and_import(package)
 
 # Configuration
 BOT_TOKEN = '7113884971:AAFb8mmF1gJ_eppRv0uNqqIrPwCoEhagsBg'  # Replace with your bot token
