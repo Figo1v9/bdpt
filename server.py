@@ -1,483 +1,354 @@
 import os
+import logging
+from telegram import Update, Bot, ParseMode
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from googleapiclient.discovery import build
+import requests
+from bs4 import BeautifulSoup
 import random
-import re
-from typing import Dict, List, Optional, Tuple
-
-import telegram
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
-
-from google.api_client.discovery import build
-from google.oauth2 import service_account
+from datetime import datetime
+from dateutil import parser
 
 # Configuration
-BOT_TOKEN = os.environ.get("BOT_TOKEN") 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")  
-SEARCH_ENGINE_ID = os.environ.get("SEARCH_ENGINE_ID")
-MIKA_IMAGE_URL = "https://i.ibb.co/ZHzqs9G/Untitled-1.jpg"
+BOT_TOKEN = '7113884971:AAFb8mmF1gJ_eppRv0uNqqIrPwCoEhagsBg'  # Replace with your bot token
+GEMINI_API_KEY = 'AIzaSyDxwXC0X5AESxS_bs4C-449HRGXB9i64kk'  # Replace with your Gemini API key
+SEARCH_ENGINE_ID = 'aac380b0a966e3f52'  # Replace with your custom search engine ID
+MIKA_IMAGE_URL = 'https://i.ibb.co/ZHzqs9G/Untitled-1.jpg'
 
-# Setup Telegram bot
-bot = telegram.Bot(token=BOT_TOKEN)
+# Setup logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-# Setup Gemini AI (Not directly supported in Python yet)
-# You'll need to find an alternative or wait for official support.
-# For now, we'll use a placeholder function.
-async def generate_ai_response(prompt: str, context: str = None, user_info_string: str = None, user_id: int = None) -> str:
-    """Placeholder for Gemini AI response generation."""
-    return f"This is a placeholder response for the prompt: {prompt}"
-
+logger = logging.getLogger(__name__)
 
 # Setup custom search engine
-service_account_info = {
-    "type": "service_account",
-    #  Your service account key details here
-}
-credentials = service_account.Credentials.from_service_account_info(
-    service_account_info
-)
-custom_search = build("customsearch", "v1", credentials=credentials)
-
-# Egyptian dialect prompt
-egyptian_dialect_prompt = " تحدث دائمًا باللهجة المصرية العامية وكن ذكي جدا ودقيق في الاجابات  "
+service = build("customsearch", "v1", developerKey=GEMINI_API_KEY)
 
 # Store messages and user info for each chat
-chat_messages: Dict[int, List[Dict]] = {}
-user_info: Dict[int, Dict] = {}
-user_roles: Dict[int, str] = {}
-last_image_search: Dict[int, Dict] = {}
-last_image_sent: Dict[int, Dict] = {}  
-message_locks: Dict[int, bool] = {}
-
-# Error logging function
-def log_error(error: Exception):
-    """Logs errors to a file."""
-    with open("error_log.txt", "a") as f:
-        f.write(f"{datetime.now().isoformat()}: {error}\n\n")
+chat_messages = {}
+user_info = {}
+message_locks = {}
+last_image_search = {}
+user_roles = {}
+last_image_sent = {}
 
 
-# --- Helper Functions ---
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text('مرحبا! كيف يمكنني مساعدتك؟')
+
+
+def handle_message(update: Update, context: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
+    message_text = update.message.text
+
+    if chat_id not in chat_messages:
+        chat_messages[chat_id] = []
+
+    if chat_id not in message_locks:
+        message_locks[chat_id] = False
+
+    update_user_info(update.message.from_user)
+
+    if update.message.chat.type in ['group', 'supergroup']:
+        if update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id:
+            handle_mention_or_reply(update, context)
+        else:
+            handle_user_message(update, context)
+    else:
+        handle_user_message(update, context)
+
+    if 'مسا يا ميكا' in message_text.lower():
+        send_mika_image(update, context)
+
+    if update.message.photo:
+        handle_image_message(update, context)
+
+
+def handle_user_message(update: Update, context: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    message_text = update.message.text.lower()
+
+    if message_locks[chat_id]:
+        return
+
+    message_locks[chat_id] = True
+
+    if message_text.startswith('امسح'):
+        handle_delete_messages(update, context)
+    elif message_text.startswith('صورة'):
+        handle_image_request(update, context)
+    elif message_text == 'صورة أخرى':
+        handle_next_image(update, context)
+    elif message_text == 'صور عشوائية':
+        send_random_images(update, context)
+    elif message_text.startswith('تقمص شخصية'):
+        handle_role_play(update, context)
+    elif message_text.startswith('فيديو'):
+        handle_video_request(update, context)
+    else:
+        handle_ai_response(update, context)
+
+    message_locks[chat_id] = False
+
+
+def handle_mention_or_reply(update: Update, context: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    mentioned_user = update.message.reply_to_message.from_user.username if update.message.reply_to_message else update.message.from_user.username
+    reply_text = update.message.text
+
+    context_message = get_message_context(chat_id, update.message.reply_to_message.message_id if update.message.reply_to_message else update.message.message_id)
+    response_prompt = f"السياق: {context_message}\nالرد: {reply_text}\nالرد:"
+    response = generate_ai_response(response_prompt)
+
+    update.message.reply_text(response, reply_to_message_id=update.message.message_id)
+
+
+def handle_ai_response(update: Update, context: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    message_text = update.message.text
+
+    user_info_string = get_user_info_string(update.message.from_user)
+    context_message = get_message_context(chat_id, update.message.reply_to_message.message_id if update.message.reply_to_message else None)
+    user_role = user_roles.get(chat_id, '')
+
+    prompt = f"{user_info_string}\nالسياق السابق: {context_message}\nأنت تتقمص شخصية: {user_role}\nسؤال المستخدم: {message_text}\n\nالرد:"
+
+    response = generate_ai_response(prompt)
+    response = add_personality(response)
+
+    update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+
+
+def handle_image_request(update: Update, context: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    message_text = update.message.text.split()
+    num_images = 1
+
+    if len(message_text) > 1 and message_text[1].isdigit():
+        num_images = min(int(message_text[1]), 10)
+        query = ' '.join(message_text[2:])
+    else:
+        query = ' '.join(message_text[1:])
+
+    query = correct_spelling(query)
+    images = search_images(query, num_images)
+
+    if images:
+        last_image_search[chat_id] = {'query': query, 'images': images, 'current_index': 0}
+        send_image_gallery(update, context, images, query)
+    else:
+        update.message.reply_text("معلش يا معلم، مش لاقي صور للي طلبته 😕 ممكن نجرب كلمات تانية؟")
+
+
+def handle_next_image(update: Update, context: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+
+    if chat_id in last_image_search and last_image_search[chat_id]['current_index'] < len(last_image_search[chat_id]['images']):
+        image = last_image_search[chat_id]['images'][last_image_search[chat_id]['current_index']]
+        context.bot.send_photo(chat_id, image['link'], caption=image['title'])
+        last_image_search[chat_id]['current_index'] += 1
+    else:
+        update.message.reply_text("مفيش صور تانية يا كبير، جرب اطلب حاجة جديدة!")
+
+
+def send_image_gallery(update: Update, context: CallbackContext, images, query: str) -> None:
+    chat_id = update.message.chat_id
+    gallery_message = f"📸  **صور لـ \"{query}\"** 🖼️\n\n"
+    for i, image in enumerate(images):
+        gallery_message += f"[{i+1}]({image['link']}) "
+
+    context.bot.send_message(chat_id, gallery_message, parse_mode=ParseMode.MARKDOWN)
+
+
+def handle_image_message(update: Update, context: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    file_id = update.message.photo[-1].file_id
+    file = context.bot.get_file(file_id)
+    image_data = requests.get(file.file_path).content
+
+    response = generate_image_description(image_data)
+    update.message.reply_text(f"يا سلام على الصورة دي! 😍\n\n{response}")
+
+
+def handle_role_play(update: Update, context: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    role = ' '.join(update.message.text.split()[2:])
+    user_roles[chat_id] = role
+    update.message.reply_text(f"تمام يا باشا، دلوقتي أنا {role}. اسأل اللي انت عايزه! 😎")
+
+
+def handle_video_request(update: Update, context: CallbackContext) -> None:
+    query = ' '.join(update.message.text.split()[1:])
+    video_info = search_youtube_video(query)
+
+    if video_info:
+        message = f"""
+🎥 *{video_info['title']}*
+
+👁️ عدد المشاهدات: {video_info['views']}
+⏱️ المدة: {format_duration(video_info['duration'])}
+📅 تاريخ النشر: {format_date(video_info['publishedAt'])}
+
+👍 {video_info['likes']} إعجاب | 💬 {video_info['comments']} تعليق
+
+🔗 [شاهد الفيديو على يوتيوب]({video_info['url']})
+
+{video_info['thumbnail']}
+        """
+        update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    else:
+        update.message.reply_text("معلش يا باشا، مش لاقي فيديو مناسب 😕 ممكن نجرب نغير الكلمات شوية؟")
+
+
+def handle_delete_messages(update: Update, context: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    message_text = update.message.text.split()
+    count = 1
+
+    if len(message_text) > 2 and message_text[1] == 'آخر' and message_text[2].isdigit():
+        count = int(message_text[2])
+
+    messages_to_delete = chat_messages[chat_id][-count:]
+    for message in messages_to_delete:
+        try:
+            context.bot.delete_message(chat_id, message['message_id'])
+        except Exception as e:
+            logger.error(f"Error deleting message: {e}")
+
+    chat_messages[chat_id] = chat_messages[chat_id][:-count]
+    update.message.reply_text(f"تم مسح آخر {count} رسالة يا باشا! 😎")
+
+
+def send_random_images(update: Update, context: CallbackContext) -> None:
+    topics = ['طبيعة', 'حيوانات', 'طعام', 'سيارات', 'عمارة']
+    random_topic = random.choice(topics)
+    images = search_images(random_topic, 5)
+
+    if images:
+        update.message.reply_text(f"شوف الصور الجميلة دي عن {random_topic}! 😍")
+        for image in images:
+            context.bot.send_photo(update.message.chat_id, image['link'], caption=image['title'])
+    else:
+        update.message.reply_text("للأسف مش لاقي صور حلوة دلوقتي، ممكن نجرب تاني بعدين؟ 😅")
+
+
+def send_mika_image(update: Update, context: CallbackContext) -> None:
+    context.bot.send_photo(update.message.chat_id, MIKA_IMAGE_URL, caption='مسا! 😘')
+
+
+def update_user_info(user) -> None:
+    user_info[user.id] = {
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'username': user.username,
+        'language_code': user.language_code
+    }
+
+
+def get_user_info_string(user) -> str:
+    info = user_info.get(user.id, {})
+    return f"اسم المستخدم: {info.get('first_name', '')} {info.get('last_name', '')}\nالمعرف: @{info.get('username', 'غير متاح')}\nاللغة: {info.get('language_code', 'غير معروفة')}"
+
+
+def get_message_context(chat_id, message_id) -> str:
+    if chat_id not in chat_messages:
+        return ""
+
+    messages = chat_messages[chat_id]
+    message_index = next((i for i, msg in enumerate(messages) if msg['message_id'] == message_id), -1)
+
+    if message_index == -1:
+        return ""
+
+    context_messages = messages[max(0, message_index - 2):message_index + 1]
+    return "\n".join(msg['content'] for msg in context_messages)
+
+
+def generate_ai_response(prompt: str) -> str:
+    # Dummy implementation for generating AI response. Replace with actual API call.
+    # Implement your logic here using appropriate API or library.
+    return f"Generated response for: {prompt}"
+
+
+def generate_image_description(image_data) -> str:
+    # Dummy implementation for generating image description. Replace with actual API call.
+    # Implement your logic here using appropriate API or library.
+    return "Description of the image."
+
+
+def search_images(query: str, num_images: int) -> list:
+    try:
+        res = service.cse().list(
+            q=query,
+            cx=SEARCH_ENGINE_ID,
+            searchType='image',
+            num=num_images
+        ).execute()
+
+        return [{'link': item['link'], 'title': item['title']} for item in res.get('items', [])]
+    except Exception as e:
+        logger.error(f"Error searching for images: {e}")
+        return []
+
+
+def search_youtube_video(query: str) -> dict:
+    # Dummy implementation for searching YouTube video. Replace with actual API call.
+    # Implement your logic here using appropriate API or library.
+    return {
+        'title': 'Sample Video',
+        'views': 1000,
+        'likes': 100,
+        'comments': 10,
+        'duration': 'PT1M34S',
+        'publishedAt': '2020-01-01T00:00:00Z',
+        'url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        'thumbnail': ''
+    }
+
+
+def correct_spelling(query: str) -> str:
+    # Dummy implementation for correcting spelling. Replace with actual API call.
+    # Implement your logic here using appropriate API or library.
+    return query
+
 
 def add_personality(response: str) -> str:
-    """Adds personality to responses."""
     personality_phrases = [
         "يا صاحبي 😎",
         " 👌",
-        "   ",
-        "  😉",
+        " 😉",
         "",
         "",
         " 👏",
         "",
-        "🌟",
+        "🌟"
     ]
-    return f"{response} {random.choice(personality_phrases)}"
+    return response + random.choice(personality_phrases)
 
 
-async def update_user_info(user: telegram.User):
-    """Updates user info in the user_info dictionary."""
-    user_info[user.id] = {
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "username": user.username,
-        "language_code": user.language_code,
-    }
+def format_duration(duration: str) -> str:
+    duration_parsed = parser.parse(duration)
+    return duration_parsed.strftime('%H:%M:%S')
 
 
-async def get_user_info_string(user: telegram.User) -> str:
-    """Returns a formatted string of user information."""
-    info = user_info.get(user.id)
-    if info:
-        return (
-            f"اسم المستخدم: {info['first_name']} {info.get('last_name', '')}\n"
-            f"المعرف: @{info.get('username', 'غير متاح')}\n"
-            f"اللغة: {info.get('language_code', 'غير معروفة')}"
-        )
-    return "معلومات المستخدم غير متاحة"
-
-
-async def get_message_context(chat_id: int, message_id: int) -> Optional[str]:
-    """Retrieves the context of a message."""
-    chat_message_list = chat_messages.get(chat_id, [])
-    message_index = next(
-        (
-            i
-            for i, msg in enumerate(chat_message_list)
-            if msg["message_id"] == message_id
-        ),
-        -1,
-    )
-
-    if message_index != -1:
-        context_messages = chat_message_list[max(0, message_index - 2) : message_index + 1]
-        return "\n".join([msg["content"] for msg in context_messages])
-    return None
-
-
-def add_chat_message(chat_id: int, message_id: int, type: str, content: str):
-    """Adds a message to the chat_messages dictionary."""
-    chat_messages.setdefault(chat_id, []).append(
-        {"message_id": message_id, "type": type, "content": content}
-    )
-
-
-# --- Image Handling ---
-
-last_sent_images: Dict[int, str] = {}  # Keep track of last sent image per user
-last_sent_index = 0  # Track the index of the last sent image
-
-
-async def search_images(query: str, user_id: int, num_images: int = 1) -> List[Dict]:
-    """Searches for images using Google Custom Search."""
-    global last_sent_index
-
-    try:
-        res = (
-            custom_search.cse()
-            .list(
-                cx=SEARCH_ENGINE_ID,
-                q=query,
-                searchType="image",
-                num=num_images,  # Get the specified number of images
-                # You can add more filter options here if needed
-            )
-            .execute()
-        )
-
-        images = res.get("items", [])
-
-        # If we find images, check for the last sent image to the user
-        if images:
-            if last_sent_index >= len(images):
-                last_sent_index = 0  # Reset the index if we've exceeded available images
-
-            start_index = last_sent_index
-            end_index = min(last_sent_index + num_images, len(images))
-            images_to_send = images[start_index:end_index]
-            last_sent_index = end_index
-
-            return images_to_send
-
-        # If no images are found in the search
-        return []
-    except Exception as e:
-        print(f"Error searching for images: {e}")
-        # You can add logic here to send a message to the user in case of an error
-        return []
-
-
-
-
-async def send_image_gallery(
-    chat_id: int, images: List[Dict], query: str
-):
-    """Sends a gallery of images with captions."""
-
-    media_group = []
-    for i, image in enumerate(images):
-        media_group.append(
-            telegram.InputMediaPhoto(
-                media=image["link"], caption=image.get("title", "") if i == 0 else None
-            )
-        )
-
-    if media_group:
-        await bot.send_media_group(chat_id=chat_id, media=media_group)
-    else:
-        await bot.send_message(chat_id, text="معلش يا معلم، مش لاقي صور للي طلبته 😕 ممكن نجرب كلمات تانية؟")
-
-
-
-async def send_next_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends the next image in the last search results."""
-    chat_id = update.effective_chat.id
-    search_data = last_image_search.get(chat_id)
-
-    if search_data and search_data["current_index"] < len(
-        search_data["images"]
-    ):
-        image = search_data["images"][search_data["current_index"]]
-        try:
-            await bot.send_photo(
-                chat_id, image["link"], caption=image.get("title")
-            )
-            search_data["current_index"] += 1
-            last_image_search[chat_id] = search_data
-            last_image_sent[chat_id] = image
-        except Exception as e:
-            print(f"Error sending photo: {e}")
-            await bot.send_message(
-                chat_id,
-                "معلش يا صاحبي، مش قادر أرسل الصورة دلوقتي. ممكن نجرب تاني بعدين؟ 😅",
-            )
-
-
-# --- Message Handling ---
-
-
-async def handle_image_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles image messages using the vision model (placeholder for now)."""
-    # Placeholder response as Gemini Vision API is not yet available
-    await update.message.reply_text("يا سلام على الصورة دي! 😍\n\n")
-
-
-async def handle_mention_or_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles mentions or replies to the bot."""
-    msg = update.message
-    chat_id = msg.chat_id
-    user_id = msg.from_user.id
-    mentioned_user = (
-        msg.reply_to_message.from_user.username if msg.reply_to_message else msg.from_user.username
-    )
-    reply_text = msg.text
-
-    if msg.reply_to_message:
-        context_message_id = msg.reply_to_message.message_id
-    else: 
-        context_message_id = msg.message_id 
-
-    context = await get_message_context(chat_id, context_message_id)
-
-    # Use Gemini (placeholder) to generate a response
-    response_prompt = f"السياق: {context}\nالرد: {reply_text}\nالرد:"
-    response = await generate_ai_response(response_prompt, user_id=user_id)
-    await msg.reply_text(response)
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles text messages."""
-    msg = update.message
-    chat_id = msg.chat_id
-    user_id = msg.from_user.id
-    message_text = msg.text
-
-    if message_locks.get(chat_id, False):
-        return
-
-    message_locks[chat_id] = True
-    try:
-        await bot.send_chat_action(chat_id, action=telegram.ChatAction.TYPING)
-
-        if message_text.lower().startswith("امسح"):
-            await handle_delete_messages(update, context)
-        elif message_text.lower().startswith("صورة"):
-            await handle_image_request(update, context)
-        elif message_text.lower() == "صورة أخرى":
-            await send_next_image(update, context)
-        elif message_text.lower() == "صور عشوائية":
-            await send_random_images(update, context)
-        elif message_text.lower().startswith("تقمص شخصية"):
-            await handle_role_play(update, context)
-        elif message_text.lower().startswith("فيديو"):
-            await handle_video_request(update, context)
-        else:
-            context_text = (
-                await get_message_context(chat_id, msg.reply_to_message.message_id)
-                if msg.reply_to_message
-                else None
-            )
-            user_info_str = await get_user_info_string(msg.from_user)
-
-            # Generate AI Response
-            response = await generate_ai_response(
-                message_text, context_text, user_info_str, user_id
-            )
-
-            # Enhanced special responses
-            if "ساكن فين" in message_text.lower():
-                response = "أنا ساكن في عزبة شلبي ورا مجدي بتاع الفول 😎 بس تعالى زورني وهعزمك على أحلى طبق فول في مصر! 🍲"
-            elif "عندك كام سنة" in message_text.lower():
-                random_age = random.randint(1, 5)
-                response = f"والله يا صاحبي أنا لسه صغنن، عمري {random_age} سنين بس 😄 بس خبرتي أد 100 سنة! 🧠"
-
-            # Add personality
-            response = add_personality(response)
-
-            sent_message = await msg.reply_text(
-                response, parse_mode=telegram.constants.ParseMode.MARKDOWN
-            )
-            add_chat_message(
-                chat_id, sent_message.message_id, "text", response
-            )
-    except Exception as e:
-        print(f"Error in handleMessage: {e}")
-        log_error(e)
-        await bot.send_message(
-            chat_id, "حصل خطأ يا صاحبي 😅 ممكن نجرب تاني بعد شوية؟"
-        )
-    finally:
-        message_locks[chat_id] = False
-
-
-
-
-# --- Command Handlers ---
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /start command."""
-    user = update.effective_user
-    await update.message.reply_html(
-        rf"أهلا يا {user.mention_html()}! أنا ميكا، البوت اللي هيساعدك في كل حاجة! 😎"
-    )
-    await update.message.reply_photo(
-        MIKA_IMAGE_URL, caption="مسا! 😘"
-    )
-
-
-async def handle_image_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles image search requests."""
-    msg = update.message
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id 
-    message_text = msg.text
-
-    parts = message_text.split(" ")
-    num_images = 1
-    if len(parts) > 1 and parts[1].isdigit():
-        num_images = min(int(parts[1]), 10) 
-        query = " ".join(parts[2:])
-    else:
-        query = " ".join(parts[1:])
-
-    if not query:
-        await msg.reply_text("ابعتلي كلمة أو جملة عشان أدورلك على صور ليها! 🖼️")
-        return
-
-    try:
-        images = await search_images(query, user_id, num_images)
-        if images:
-            last_image_search[chat_id] = {
-                "query": query,
-                "images": images,
-                "current_index": 0,
-            }
-
-            await send_image_gallery(chat_id, images, query)
-
-            if len(images) == 1:
-                await msg.reply_text(f"دي أحلى صورة لقيتها لـ '{query}' 🖼️ عجبتك؟ 😍")
-            else:
-                await msg.reply_text(f"دي أحلى {len(images)} صور لقيتها لـ '{query}' 🖼️ عجبوك؟ 😍")
-        else:
-            await msg.reply_text(
-                "معلش يا معلم، مش لاقي صور للي طلبته 😕 ممكن نجرب كلمات تانية؟"
-            )
-    except Exception as e:
-        print(f"Error in handleImageRequest: {e}")
-        log_error(e)
-        await bot.send_message(
-            chat_id, "حصل خطأ في البحث عن الصور 😅 ممكن نجرب تاني بعد شوية؟"
-        )
-
-async def handle_next_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles requests for the next image in search results."""
-    await send_next_image(update, context)  
-
-
-async def handle_delete_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles message deletion requests."""
-    msg = update.message
-    chat_id = msg.chat_id
-    message_text = msg.text
-
-    parts = message_text.split(" ")
-    count = 1
-    if len(parts) > 2 and parts[1] == "آخر" and parts[2].isdigit():
-        count = int(parts[2])
-
-    chat_message_list = chat_messages.get(chat_id, [])
-    messages_to_delete = chat_message_list[-count:]
-
-    for message in messages_to_delete:
-        try:
-            await bot.delete_message(chat_id, message["message_id"])
-        except Exception as e:
-            print(f"Error deleting message: {e}")
-
-    chat_messages[chat_id] = chat_message_list[:-count]
-    await msg.reply_text(f"تم مسح آخر {count} رسالة يا باشا! 😎")
-
-
-async def handle_role_play(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles role-playing requests."""
-    msg = update.message
-    chat_id = msg.chat_id
-    message_text = msg.text
-    role = message_text.split("تقمص شخصية")[1].strip()
-
-    user_roles[chat_id] = role
-    await msg.reply_text(f"تمام يا باشا، دلوقتي أنا {role}. اسأل اللي انت عايزه! 😎")
-
-
-async def handle_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles video search requests (placeholder for now)."""
-    # Placeholder response - You'll need to implement YouTube search
-    await update.message.reply_text("لسه مش بعرف أدور على فيديوهات، بس هحاول أتعلم قريب! 😉")
-
-
-async def send_random_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends random images based on a list of topics."""
-    topics = ["طبيعة", "حيوانات", "طعام", "سيارات", "عمارة"]
-    random_topic = random.choice(topics)
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id 
-
-    try:
-        images = await search_images(random_topic, user_id, 5)
-        if images:
-            await bot.send_message(
-                chat_id, f"شوف الصور الجميلة دي عن {random_topic}! 😍"
-            )
-            await send_image_gallery(chat_id, images, random_topic)
-        else:
-            await bot.send_message(
-                chat_id, "للأسف مش لاقي صور حلوة دلوقتي، ممكن نجرب تاني بعدين؟ 😅"
-            )
-    except Exception as e:
-        print(f"Error sending random images: {e}")
-        await bot.send_message(
-            chat_id, "حصل خطأ في إرسال الصور العشوائية، ممكن نجرب تاني؟ 🙏"
-        )
-
-
+def format_date(date_str: str) -> str:
+    date_parsed = parser.parse(date_str)
+    return date_parsed.strftime('%d %B %Y')
 
 
 def main():
-    """Starts the bot."""
-    application = Application.builder().token(BOT_TOKEN).build()
+    updater = Updater(BOT_TOKEN)
+    dispatcher = updater.dispatcher
 
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT
-            & (~filters.COMMAND)
-            & (
-                filters.REPLY
-                | filters.Regex(rf"@{bot.username}")
-            ),
-            handle_mention_or_reply,
-        )
-    )
-    application.add_handler(
-        MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
-    )
-    application.add_handler(MessageHandler(filters.PHOTO, handle_image_message))
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
-    # Error handler
-    application.add_error_handler(lambda x, y: log_error(y)) 
-
-    # Start the Bot
-    application.run_polling()
-    print("البوت شغال يا معلم وجاهز للخدمة! 🚀 يلا نبدأ نكتشف الدنيا مع بعض! 😎")
+    updater.start_polling()
+    updater.idle()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
