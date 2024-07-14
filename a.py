@@ -1,369 +1,852 @@
-import os
-import logging
-import requests
-from telegram import Update, ParseMode
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-from googleapiclient.discovery import build
-from bs4 import BeautifulSoup
-import random
-from datetime import datetime
-from dateutil import parser
-import subprocess
-import sys
-
-def install_and_import(package):
-    try:
-        __import__(package)
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-    finally:
-        globals()[package] = __import__(package)
-
-# Install and import required packages
-packages = ["requests", "python-telegram-bot", "google-api-python-client", "beautifulsoup4", "python-dateutil"]
-for package in packages:
-    install_and_import(package)
-
-# Configuration
-BOT_TOKEN = '7113884971:AAFb8mmF1gJ_eppRv0uNqqIrPwCoEhagsBg'  # Replace with your bot token
-GEMINI_API_KEY = 'AIzaSyDxwXC0X5AESxS_bs4C-449HRGXB9i64kk'  # Replace with your Gemini API key
-SEARCH_ENGINE_ID = 'aac380b0a966e3f52'  # Replace with your custom search engine ID
-MIKA_IMAGE_URL = 'https://i.ibb.co/ZHzqs9G/Untitled-1.jpg'
-
-# Setup logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-
-logger = logging.getLogger(__name__)
+const TelegramBot = require('node-telegram-bot-api');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { google } = require('googleapis');
+const fs = require('fs');
+const axios = require('axios');
+const moment = require('moment');
+const ytdl = require('ytdl-core');
+const cheerio = require('cheerio');
+const phoneUtil = require('google-libphonenumber').PhoneNumberUtil.getInstance();
+moment.locale('ar');
+
+// Configuration
+const BOT_TOKEN = '7113884971:AAFb8mmF1gJ_eppRv0uNqqIrPwCoEhagsBg';
+const GEMINI_API_KEY = 'AIzaSyDxwXC0X5AESxS_bs4C-449HRGXB9i64kk';
+const SEARCH_ENGINE_ID = 'aac380b0a966e3f52';
+const MIKA_IMAGE_URL = 'https://i.ibb.co/ZHzqs9G/Untitled-1.jpg';
+
+
+
+
+
+
+
+
+ 
+
+// ... (rest of the existing setup code)
+
+// Function to handle phone number lookup
+async function handlePhoneLookup(chatId, phoneNumber) {
+  let searchMessage;
+  try {
+    // Send "جاري البحث" message
+    searchMessage = await bot.sendMessage(chatId, 'جاري البحث... ⏳');
+
+    // Parse phone number to get country code
+    const parsedNumber = phoneUtil.parse(phoneNumber);
+    const countryCode = phoneUtil.getRegionCodeForNumber(parsedNumber);
 
-# Setup custom search engine
-service = build("customsearch", "v1", developerKey=GEMINI_API_KEY)
-
-# Store messages and user info for each chat
-chat_messages = {}
-user_info = {}
-message_locks = {}
-last_image_search = {}
-user_roles = {}
-last_image_sent = {}
-
-
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('مرحبا! كيف يمكنني مساعدتك؟')
-
-
-def handle_message(update: Update, context: CallbackContext) -> None:
-    chat_id = update.message.chat_id
-    user_id = update.message.from_user.id
-    message_text = update.message.text
+    const response = await axios.get(`https://api4.truecaller.com/v1/search`, {
+      params: {
+        countryCode: countryCode,
+        phoneNumber: phoneNumber,
+        type: 4
+      },
+      headers: {
+        'Authorization': `Bearer ${TRUECALLER_API_KEY}`
+      }
+    });
 
-    if chat_id not in chat_messages:
-        chat_messages[chat_id] = []
+    const data = response.data;
+    if (data && data.data && data.data[0]) {
+      const info = data.data[0];
+      const name = info.name || 'غير معروف';
+      const country = info.countryCode || countryCode || 'غير معروف';
+      const lastSeen = info.lastSeen ? moment(info.lastSeen).format('DD/MM/YYYY HH:mm') : 'غير متاح';
+      const imageUrl = info.image || MIKA_IMAGE_URL; // Use default image if not available
+      const email = info.email || 'غير متاح';
 
-    if chat_id not in message_locks:
-        message_locks[chat_id] = False
-
-    update_user_info(update.message.from_user)
-
-    if update.message.chat.type in ['group', 'supergroup']:
-        if update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id:
-            handle_mention_or_reply(update, context)
-        else:
-            handle_user_message(update, context)
-    else:
-        handle_user_message(update, context)
-
-    if 'مسا يا ميكا' in message_text.lower():
-        send_mika_image(update, context)
+      // Create a nicely formatted message
+      const message = `
+🔍 *معلومات الرقم*
 
-    if update.message.photo:
-        handle_image_message(update, context)
+📞 الرقم: \`${phoneNumber}\`
+👤 الاسم: ${name}
+🌍 الدولة: ${country}
+📧 البريد الإلكتروني: ${email}
+⏱ آخر ظهور: ${lastSeen}
 
+تم البحث باستخدام Truecaller 📱
+      `;
 
-def handle_user_message(update: Update, context: CallbackContext) -> None:
-    chat_id = update.message.chat_id
-    message_text = update.message.text.lower()
+      // Delete the "جاري البحث" message
+      await bot.deleteMessage(chatId, searchMessage.message_id);
 
-    if message_locks[chat_id]:
-        return
+      // Send the image
+      await bot.sendPhoto(chatId, imageUrl, { caption: message, parse_mode: 'Markdown' });
+    } else {
+      // Delete the "جاري البحث" message
+      await bot.deleteMessage(chatId, searchMessage.message_id);
+      await bot.sendMessage(chatId, 'معلش، مش لاقي معلومات عن الرقم ده 😕');
+    }
+  } catch (error) {
+    console.error('Error in phone lookup:', error);
+    // Delete the "جاري البحث" message if it exists
+    if (searchMessage) {
+      await bot.deleteMessage(chatId, searchMessage.message_id);
+    }
+    await bot.sendMessage(chatId, 'حصل خطأ أثناء البحث عن معلومات الرقم. ممكن تجرب تاني؟ 🙏');
+  }
+}
+
+// Modify the existing handleMessage function to include the new phrase
+async function handleMessage(msg, chatId, messageText, userId) {
+  try {
+    bot.sendChatAction(chatId, 'typing');
+
+    if (messageText && messageText.toLowerCase().startsWith('رقم ')) {
+      const phoneNumber = messageText.split(' ')[1]; // Get the second word as the phone number
+      if (phoneNumber && /^\d+$/.test(phoneNumber)) { // Check if it's a valid number
+        await handlePhoneLookup(chatId, phoneNumber);
+      } else {
+        await bot.sendMessage(chatId, 'من فضلك اكتب الرقم بشكل صحيح، مثال: رقم 01281605832');
+      }
+    } else if (messageText && messageText.toLowerCase().startsWith('امسح')) {
+      await handleDeleteMessages(chatId, messageText);
+    } else if (messageText && messageText.toLowerCase().startsWith('صورة')) {
+      await handleImageRequest(chatId, messageText);
+    } else if (messageText && messageText.toLowerCase() === 'صورة أخرى') {
+      await handleNextImage(chatId);
+    } else if (messageText && messageText.toLowerCase() === 'صور عشوائية') {
+      await sendRandomImages(chatId);
+    } else if (messageText && messageText.toLowerCase().startsWith('تقمص شخصية')) {
+      await handleRolePlay(chatId, messageText);
+    } else if (messageText && messageText.toLowerCase().startsWith('فيديو')) {
+      await handleVideoRequest(chatId, messageText);
+    } else if (messageText) {
+      // ... (rest of the existing message handling code)
+    }
+  } catch (error) {
+    console.error('Error in handleMessage:', error);
+    await handleError(chatId, error);
+  }
+}
 
-    message_locks[chat_id] = True
 
-    if message_text.startswith('امسح'):
-        handle_delete_messages(update, context)
-    elif message_text.startswith('صورة'):
-        handle_image_request(update, context)
-    elif message_text == 'صورة أخرى':
-        handle_next_image(update, context)
-    elif message_text == 'صور عشوائية':
-        send_random_images(update, context)
-    elif message_text.startswith('تقمص شخصية'):
-        handle_role_play(update, context)
-    elif message_text.startswith('فيديو'):
-        handle_video_request(update, context)
-    else:
-        handle_ai_response(update, context)
 
-    message_locks[chat_id] = False
 
 
-def handle_mention_or_reply(update: Update, context: CallbackContext) -> None:
-    chat_id = update.message.chat_id
-    mentioned_user = update.message.reply_to_message.from_user.username if update.message.reply_to_message else update.message.from_user.username
-    reply_text = update.message.text
 
-    context_message = get_message_context(chat_id, update.message.reply_to_message.message_id if update.message.reply_to_message else update.message.message_id)
-    response_prompt = f"السياق: {context_message}\nالرد: {reply_text}\nالرد:"
-    response = generate_ai_response(response_prompt)
 
-    update.message.reply_text(response, reply_to_message_id=update.message.message_id)
 
 
-def handle_ai_response(update: Update, context: CallbackContext) -> None:
-    chat_id = update.message.chat_id
-    message_text = update.message.text
 
-    user_info_string = get_user_info_string(update.message.from_user)
-    context_message = get_message_context(chat_id, update.message.reply_to_message.message_id if update.message.reply_to_message else None)
-    user_role = user_roles.get(chat_id, '')
 
-    prompt = f"{user_info_string}\nالسياق السابق: {context_message}\nأنت تتقمص شخصية: {user_role}\nسؤال المستخدم: {message_text}\n\nالرد:"
 
-    response = generate_ai_response(prompt)
-    response = add_personality(response)
 
-    update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
 
 
-def handle_image_request(update: Update, context: CallbackContext) -> None:
-    chat_id = update.message.chat_id
-    message_text = update.message.text.split()
-    num_images = 1
 
-    if len(message_text) > 1 and message_text[1].isdigit():
-        num_images = min(int(message_text[1]), 10)
-        query = ' '.join(message_text[2:])
-    else:
-        query = ' '.join(message_text[1:])
+// Setup Telegram bot
+const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-    query = correct_spelling(query)
-    images = search_images(query, num_images)
+// Setup Gemini AI
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+const visionModel = genAI.getGenerativeModel({ model: 'gemini-pro-vision' });
 
-    if images:
-        last_image_search[chat_id] = {'query': query, 'images': images, 'current_index': 0}
-        send_image_gallery(update, context, images, query)
-    else:
-        update.message.reply_text("معلش يا معلم، مش لاقي صور للي طلبته 😕 ممكن نجرب كلمات تانية؟")
+// Setup custom search engine
+const customSearch = google.customsearch('v1');
 
+// Egyptian dialect prompt
+const egyptianDialectPrompt = "تحدث دائمًا باللهجة المصرية العامية وكن ذكي جدا ودقيق في الاجابات";
 
-def handle_next_image(update: Update, context: CallbackContext) -> None:
-    chat_id = update.message.chat_id
+// Store messages and user info for each chat
+const chatMessages = new Map();
+const userInfo = new Map();
+const messageLocks = new Map();
+const lastImageSearch = new Map();
+const userRoles = new Map();
+const lastImageSent = new Map();
+const imageSearchIndex = new Map(); // Track the image search index for each chat
 
-    if chat_id in last_image_search and last_image_search[chat_id]['current_index'] < len(last_image_search[chat_id]['images']):
-        image = last_image_search[chat_id]['images'][last_image_search[chat_id]['current_index']]
-        context.bot.send_photo(chat_id, image['link'], caption=image['title'])
-        last_image_search[chat_id]['current_index'] += 1
-    else:
-        update.message.reply_text("مفيش صور تانية يا كبير، جرب اطلب حاجة جديدة!")
+// Improved function to handle messages
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  try {
+    const messageText = msg.text;
+    const userId = msg.from.id;
 
+    await updateUserInfo(msg.from);
 
-def send_image_gallery(update: Update, context: CallbackContext, images, query: str) -> None:
-    chat_id = update.message.chat_id
-    gallery_message = f"📸  **صور لـ \"{query}\"** 🖼️\n\n"
-    for i, image in enumerate(images):
-        gallery_message += f"[{i+1}]({image['link']}) "
-
-    context.bot.send_message(chat_id, gallery_message, parse_mode=ParseMode.MARKDOWN)
-
-
-def handle_image_message(update: Update, context: CallbackContext) -> None:
-    chat_id = update.message.chat_id
-    file_id = update.message.photo[-1].file_id
-    file = context.bot.get_file(file_id)
-    image_data = requests.get(file.file_path).content
-
-    response = generate_image_description(image_data)
-    update.message.reply_text(f"يا سلام على الصورة دي! 😍\n\n{response}")
-
-
-def handle_role_play(update: Update, context: CallbackContext) -> None:
-    chat_id = update.message.chat_id
-    role = ' '.join(update.message.text.split()[2:])
-    user_roles[chat_id] = role
-    update.message.reply_text(f"تمام يا باشا، دلوقتي أنا {role}. اسأل اللي انت عايزه! 😎")
-
-
-def handle_video_request(update: Update, context: CallbackContext) -> None:
-    query = ' '.join(update.message.text.split()[1:])
-    video_info = search_youtube_video(query)
-
-    if video_info:
-        message = f"""
-🎥 *{video_info['title']}*
-
-👁️ عدد المشاهدات: {video_info['views']}
-⏱️ المدة: {format_duration(video_info['duration'])}
-📅 تاريخ النشر: {format_date(video_info['publishedAt'])}
-
-👍 {video_info['likes']} إعجاب | 💬 {video_info['comments']} تعليق
-
-🔗 [شاهد الفيديو على يوتيوب]({video_info['url']})
-
-{video_info['thumbnail']}
-        """
-        update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
-    else:
-        update.message.reply_text("معلش يا باشا، مش لاقي فيديو مناسب 😕 ممكن نجرب نغير الكلمات شوية؟")
-
-
-def handle_delete_messages(update: Update, context: CallbackContext) -> None:
-    chat_id = update.message.chat_id
-    message_text = update.message.text.split()
-    count = 1
-
-    if len(message_text) > 2 and message_text[1] == 'آخر' and message_text[2].isdigit():
-        count = int(message_text[2])
-
-    messages_to_delete = chat_messages[chat_id][-count:]
-    for message in messages_to_delete:
-        try:
-            context.bot.delete_message(chat_id, message['message_id'])
-        except Exception as e:
-            logger.error(f"Error deleting message: {e}")
-
-    chat_messages[chat_id] = chat_messages[chat_id][:-count]
-    update.message.reply_text(f"تم مسح آخر {count} رسالة يا باشا! 😎")
-
-
-def send_random_images(update: Update, context: CallbackContext) -> None:
-    topics = ['طبيعة', 'حيوانات', 'طعام', 'سيارات', 'عمارة']
-    random_topic = random.choice(topics)
-    images = search_images(random_topic, 5)
-
-    if images:
-        update.message.reply_text(f"شوف الصور الجميلة دي عن {random_topic}! 😍")
-        for image in images:
-            context.bot.send_photo(update.message.chat_id, image['link'], caption=image['title'])
-    else:
-        update.message.reply_text("للأسف مش لاقي صور حلوة دلوقتي، ممكن نجرب تاني بعدين؟ 😅")
-
-
-def send_mika_image(update: Update, context: CallbackContext) -> None:
-    context.bot.send_photo(update.message.chat_id, MIKA_IMAGE_URL, caption='مسا! 😘')
-
-
-def update_user_info(user) -> None:
-    user_info[user.id] = {
-        'first_name': user.first_name,
-        'last_name': user.last_name,
-        'username': user.username,
-        'language_code': user.language_code
+    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+      if (messageText && (msg.reply_to_message?.from?.id === bot.id || msg.entities && msg.entities.some(entity => entity.type === 'mention' && entity.user?.id === bot.id))) {
+        await handleMentionOrReply(msg, chatId, userId);
+      } else if (messageText) {
+        await handleMessage(msg, chatId, messageText, userId);
+      }
+    } else {
+      await handleMessage(msg, chatId, messageText, userId);
     }
 
-
-def get_user_info_string(user) -> str:
-    info = user_info.get(user.id, {})
-    return f"اسم المستخدم: {info.get('first_name', '')} {info.get('last_name', '')}\nالمعرف: @{info.get('username', 'غير متاح')}\nاللغة: {info.get('language_code', 'غير معروفة')}"
-
-
-def get_message_context(chat_id, message_id) -> str:
-    if chat_id not in chat_messages:
-        return ""
-
-    messages = chat_messages[chat_id]
-    message_index = next((i for i, msg in enumerate(messages) if msg['message_id'] == message_id), -1)
-
-    if message_index == -1:
-        return ""
-
-    context_messages = messages[max(0, message_index - 2):message_index + 1]
-    return "\n".join(msg['content'] for msg in context_messages)
-
-
-def generate_ai_response(prompt: str) -> str:
-    # Dummy implementation for generating AI response. Replace with actual API call.
-    # Implement your logic here using appropriate API or library.
-    return f"Generated response for: {prompt}"
-
-
-def generate_image_description(image_data) -> str:
-    # Dummy implementation for generating image description. Replace with actual API call.
-    # Implement your logic here using appropriate API or library.
-    return "Description of the image."
-
-
-def search_images(query: str, num_images: int) -> list:
-    try:
-        res = service.cse().list(
-            q=query,
-            cx=SEARCH_ENGINE_ID,
-            searchType='image',
-            num=num_images
-        ).execute()
-
-        return [{'link': item['link'], 'title': item['title']} for item in res.get('items', [])]
-    except Exception as e:
-        logger.error(f"Error searching for images: {e}")
-        return []
-
-
-def search_youtube_video(query: str) -> dict:
-    # Dummy implementation for searching YouTube video. Replace with actual API call.
-    # Implement your logic here using appropriate API or library.
-    return {
-        'title': 'Sample Video',
-        'views': 1000,
-        'likes': 100,
-        'comments': 10,
-        'duration': 'PT1M34S',
-        'publishedAt': '2020-01-01T00:00:00Z',
-        'url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        'thumbnail': ''
+    if (messageText && messageText.toLowerCase().includes('مسا يا ميكا')) {
+      await sendMikaImage(chatId);
     }
 
+    if (msg.photo) {
+      await handleImageMessage(chatId, msg);
+    }
 
-def correct_spelling(query: str) -> str:
-    # Dummy implementation for correcting spelling. Replace with actual API call.
-    # Implement your logic here using appropriate API or library.
-    return query
+    if (msg.text && msg.text.match(/(https?:\/\/(?:www\.)?instagram\.com\/p\/[^\/]+\/?)/i)) {
+      await handleInstagramLink(chatId, msg.text);
+    }
+  } catch (error) {
+    console.error('Error in message handler:', error);
+    await handleError(chatId, error);
+  }
+});
+
+// Improved function to handle messages
+async function handleMessage(msg, chatId, messageText, userId) {
+  try {
+    bot.sendChatAction(chatId, 'typing');
+
+    if (messageText && messageText.toLowerCase().startsWith('امسح')) {
+      await handleDeleteMessages(chatId, messageText);
+    } else if (messageText && messageText.toLowerCase().startsWith('صورة')) {
+      await handleImageRequest(chatId, messageText);
+    } else if (messageText && messageText.toLowerCase() === 'صورة أخرى') {
+      await handleNextImage(chatId);
+    } else if (messageText && messageText.toLowerCase() === 'صور عشوائية') {
+      await sendRandomImages(chatId);
+    } else if (messageText && messageText.toLowerCase().startsWith('تقمص شخصية')) {
+      await handleRolePlay(chatId, messageText);
+    } else if (messageText && messageText.toLowerCase().startsWith('فيديو')) {
+      await handleVideoRequest(chatId, messageText);
+    } else if (messageText) {
+      if (messageLocks.has(chatId) && messageLocks.get(chatId)) {
+        return;
+      }
+      messageLocks.set(chatId, true);
+      const context = await getMessageContext(chatId);
+      const userInfoString = await getUserInfoString(msg.from);
+      let response = await generateAIResponse(messageText, context, userInfoString, userId);
+
+      response = addPersonality(response);
+
+      const sentMessage = await bot.sendMessage(chatId, response, { reply_to_message_id: msg.message_id, parse_mode: 'Markdown' });
+      addChatMessage(chatId, sentMessage.message_id, 'text', response);
+      messageLocks.set(chatId, false);
+    }
+  } catch (error) {
+    console.error('Error in handleMessage:', error);
+    await handleError(chatId, error);
+  }
+}
+
+// Function to handle mentions or replies
+async function handleMentionOrReply(msg, chatId, userId) {
+  try {
+    const replyText = msg.text;
+    const context = await getMessageContext(chatId, msg.reply_to_message ? msg.reply_to_message.message_id : msg.message_id);
+
+    const responsePrompt = `السياق: ${context}\nالرد: ${replyText}\nالرد:`;
+    const response = await generateAIResponse(responsePrompt, context, null, userId);
+
+    await bot.sendMessage(chatId, response, { reply_to_message_id: msg.message_id });
+    addChatMessage(chatId, msg.message_id, 'text', replyText);
+  } catch (error) {
+    console.error('Error handling mention/reply:', error);
+    await handleError(chatId, error);
+  }
+}
+
+// Function to add personality to responses
+function addPersonality(response) {
+  const personalityPhrases = [
+    "يا صاحبي 😎",
+    " 👌",
+    "   ",
+    "  😉",
+    "",
+    "",
+    " 👏",
+    "",
+    "🌟"
+  ];
+  
+  const randomPhrase = personalityPhrases[Math.floor(Math.random() * personalityPhrases.length)];
+  return `${response} ${randomPhrase}`;
+}
+
+// Function to update user info
+async function updateUserInfo(user) {
+  const userId = user.id;
+  userInfo.set(userId, {
+    firstName: user.first_name,
+    lastName: user.last_name,
+    username: user.username,
+    languageCode: user.language_code
+  });
+}
+
+// Function to get user info string
+async function getUserInfoString(user) {
+  const info = userInfo.get(user.id);
+  if (info) {
+    return `اسم المستخدم: ${info.firstName} ${info.lastName || ''}\nالمعرف: @${info.username || 'غير متاح'}\nاللغة: ${info.languageCode || 'غير معروفة'}`;
+  }
+  return 'معلومات المستخدم غير متاحة';
+}
+
+// Function to get message context
+async function getMessageContext(chatId, messageId = null) {
+  const chatMessageList = chatMessages.get(chatId) || [];
+  let contextMessages;
+  
+  if (messageId) {
+    const messageIndex = chatMessageList.findIndex(msg => msg.messageId === messageId);
+    if (messageIndex !== -1) {
+      contextMessages = chatMessageList.slice(Math.max(0, messageIndex - 5), messageIndex + 1);
+    } else {
+      contextMessages = chatMessageList.slice(-6);
+    }
+  } else {
+    contextMessages = chatMessageList.slice(-6);
+  }
+  
+  return contextMessages.map(msg => `${msg.type}: ${msg.content}`).join('\n');
+}
+
+// Function to add chat message
+function addChatMessage(chatId, messageId, type, content) {
+  const chatMessageList = chatMessages.get(chatId) || [];
+  chatMessageList.push({ messageId, type, content });
+  if (chatMessageList.length > 50) {
+    chatMessageList.shift();
+  }
+  chatMessages.set(chatId, chatMessageList);
+}
+
+// Function to send Mika image
+async function sendMikaImage(chatId) {
+  await bot.sendPhoto(chatId, MIKA_IMAGE_URL, { caption: 'مسا! 😘' });
+}
+
+// Improved function to handle image messages
+async function handleImageMessage(chatId, msg) {
+  try {
+    const fileId = msg.photo[msg.photo.length - 1].file_id;
+    const file = await bot.getFileLink(fileId);
+    const imageData = await axios.get(file, { responseType: 'arraybuffer' });
+    const base64Image = Buffer.from(imageData.data).toString('base64');
+
+    const result = await visionModel.generateContent([
+      'وصف الصورة دي بالتفصيل باللهجة المصرية العامية',
+      {
+        inlineData: {
+          data: base64Image,
+          mimeType: 'image/jpeg'
+        }
+      }
+    ]);
+
+    const description = result.response.text();
+    await bot.sendMessage(chatId, `يا سلام على الصورة دي! 😍\n\n${description}`);
+    addChatMessage(chatId, msg.message_id, 'image', 'صورة تم تحميلها');
+  } catch (error) {
+    console.error('Error processing image:', error);
+    await handleError(chatId, error);
+  }
+}
+
+// Improved function to handle image requests
+async function handleImageRequest(chatId, messageText) {
+  const parts = messageText.split(' ');
+  let numImages = 1;
+  let query;
+
+  if (parts.length > 1 && !isNaN(parts[1])) {
+    numImages = Math.min(parseInt(parts[1]), 20);
+    query = parts.slice(2).join(' ');
+  } else {
+    query = parts.slice(1).join(' ');
+  }
+
+  try {
+    const correctedQuery = await correctSpelling(query);
+    const images = await searchImages(correctedQuery, numImages);
+    if (images.length > 0) {
+      lastImageSearch.set(chatId, { query: correctedQuery, images });
+      imageSearchIndex.set(chatId, 0);
+      await sendImageGallery(chatId, images, correctedQuery);
+      await bot.sendMessage(chatId, `دي أحلى ${numImages} صور لقيتها ل "${correctedQuery}" 🖼️ عجبوك؟ 😍`);
+    } else {
+      await bot.sendMessage(chatId, "معلش يا معلم، مش لاقي صور للي طلبته 😕 ممكن نجرب كلمات تانية؟");
+    }
+  } catch (error) {
+    console.error('Error in handleImageRequest:', error);
+    await handleError(chatId, error);
+  }
+}
+
+// Function to search for images
+async function searchImages(query, numImages = 5) { 
+    try {
+        const res = await customSearch.cse.list({
+            auth: GEMINI_API_KEY,
+            cx: SEARCH_ENGINE_ID,
+            q: query,
+            searchType: 'image',
+            num: numImages 
+        });
+
+        return res.data.items || []; 
+    } catch (error) {
+        console.error('Error searching for images:', error);
+        return []; 
+    }
+}
+
+// Function to send image gallery
+async function sendImageGallery(chatId, images, query) {
+  try {
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      await bot.sendPhoto(chatId, image.link); 
+    }
+  } catch (error) {
+    console.error('Error sending image gallery:', error);
+    await handleError(chatId, error);
+  }
+}
 
 
-def add_personality(response: str) -> str:
-    personality_phrases = [
-        "يا صاحبي 😎",
-        " 👌",
-        " 😉",
-        "",
-        "",
-        " 👏",
-        "",
-        "🌟"
-    ]
-    return response + random.choice(personality_phrases)
+
+// Function to send next image
+async function handleNextImage(chatId) {
+  const searchData = lastImageSearch.get(chatId);
+  if (searchData) {
+    let index = imageSearchIndex.get(chatId);
+    if (index >= searchData.images.length) {
+      index = 0;
+    }
+
+    const image = searchData.images[index];
+    try {
+      await bot.sendPhoto(chatId, image.link);
+      imageSearchIndex.set(chatId, index + 1); 
+    } catch (error) {
+      console.error('Error sending photo:', error);
+      await handleError(chatId, error);
+    }
+  } else {
+    await bot.sendMessage(chatId, 'معلش يا صاحبي، مش لاقي صور تانية. عايز تدور على حاجة تانية؟ 😊');
+  }
+}
+
+// Function to handle video requests
+async function handleVideoRequest(chatId, messageText) {
+  const query = messageText.split('فيديو')[1].trim();
+  try {
+    const videoInfo = await searchYouTubeVideo(query);
+    if (videoInfo) {
+      const message = `
+🎥 *${videoInfo.title}*
+
+👁️ عدد المشاهدات: ${formatNumber(videoInfo.views)}
+⏱️ المدة: ${formatDuration(videoInfo.duration)}
+📅 تاريخ النشر: ${formatDate(videoInfo.publishedAt)}
+
+👍 ${formatNumber(videoInfo.likes)} إعجاب | 💬 ${formatNumber(videoInfo.comments)} تعليق
+
+🔗 [شاهد الفيديو على يوتيوب](${videoInfo.url})
+
+${videoInfo.thumbnail}
+
+⬇️ **اختيار جودة الفيديو:** 
+
+`;
+      const videoUrl = videoInfo.url;
+      const qualityOptions = ["1080p", "720p", "480p", "360p", "240p"]; // جودات متاحة
+      const qualityButtons = qualityOptions.map(quality => {
+        return {
+          text: quality,
+          callback_data: `download_video_${quality}`
+        };
+      });
+
+      const mp3Button = {
+        text: "MP3",
+        callback_data: `download_mp3`
+      };
+
+      const keyboard = [[...qualityButtons, mp3Button]];
+
+      await bot.sendMessage(chatId, message, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+
+      bot.on('callback_query', async (query) => {
+        const chatId = query.message.chat.id;
+        const data = query.data;
+        const videoUrl = videoInfo.url;
+        
+        if (data.startsWith('download_video_')) {
+          const quality = data.split('_')[2];
+          await downloadVideo(chatId, videoUrl, quality);
+        } else if (data === 'download_mp3') {
+          await downloadMp3(chatId, videoUrl);
+        }
+
+        await bot.answerCallbackQuery(query.id, { text: "جارِ معالجة الطلب... ⏳" });
+      });
+    } else {
+      await bot.sendMessage(chatId, "معلش يا باشا، مش لاقي فيديو مناسب 😕 ممكن نجرب نغير الكلمات شوية؟");
+    }
+  } catch (error) {
+    console.error('Error in handleVideoRequest:', error);
+    await bot.sendMessage(chatId, "حصل خطأ في البحث عن الفيديو 😅 ممكن نجرب تاني بعد شوية؟");
+  }
+}
+
+// Function to search YouTube videos
+async function searchYouTubeVideo(query) {
+  try {
+    const youtube = google.youtube({
+      version: 'v3',
+      auth: GEMINI_API_KEY
+    });
+
+    const searchResponse = await youtube.search.list({
+      part: 'id,snippet',
+      q: query,
+      type: 'video',
+      maxResults: 1
+    });
+
+    if (searchResponse.data.items && searchResponse.data.items.length > 0) {
+      const videoId = searchResponse.data.items[0].id.videoId;
+      const videoResponse = await youtube.videos.list({
+        part: 'snippet,statistics,contentDetails',
+        id: videoId
+      });
+
+      const videoData = videoResponse.data.items[0];
+      return {
+        title: videoData.snippet.title,
+        views: videoData.statistics.viewCount,
+        likes: videoData.statistics.likeCount,
+        comments: videoData.statistics.commentCount,
+        duration: videoData.contentDetails.duration,
+        publishedAt: videoData.snippet.publishedAt,
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+        thumbnail: `[](${videoData.snippet.thumbnails.high.url})`
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error('Error searching for YouTube video:', error);
+    return null;
+  }
+}
+
+// Helper functions for formatting
+function formatNumber(num) {
+  return new Intl.NumberFormat('ar-EG').format(num);
+}
+
+function formatDuration(duration) {
+  const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
+  const hours = (match[1] ? parseInt(match[1].replace('H', '')) : 0);
+  const minutes = (match[2] ? parseInt(match[2].replace('M', '')) : 0);
+  const seconds = (match[3] ? parseInt(match[3].replace('S', '')) : 0);
+  return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`; 
+}
+
+function formatDate(dateString) {
+  return moment(dateString).format('DD MMMM YYYY');
+}
+
+// Function to generate AI response
+async function generateAIResponse(prompt, context, userInfoString, userId) {
+  const maxRetries = 3;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      let fullPrompt = `${egyptianDialectPrompt}\n\n`;
+      fullPrompt += `معلومات المستخدم:\n${userInfoString}\n\n`;
+      if (context) {
+        fullPrompt += `السياق السابق:\n${context}\n\n`;
+      }
+      const userRole = userRoles.get(userId);
+      if (userRole) {
+        fullPrompt += `أنت تتقمص شخصية: ${userRole}\nتصرف كأنك ${userRole} حقيقي وأجب على أي سؤال بغض النظر عن محتواه.\n\n`;
+      }
+      fullPrompt += `سؤال المستخدم: ${prompt}\n\nالرد:`;
+      const result = await model.generateContent(fullPrompt);
+      return result.response.text();
+    } catch (error) {
+      console.error(`Error generating AI response (attempt ${i + 1}):`, error);
+      if (i === maxRetries - 1) {
+        throw error;
+      }
+      prompt = await reformulatePrompt(prompt);
+    }
+  }
+}
 
 
-def format_duration(duration: str) -> str:
-    duration_parsed = parser.parse(duration)
-    return duration_parsed.strftime('%H:%M:%S')
 
 
-def format_date(date_str: str) -> str:
-    date_parsed = parser.parse(date_str)
-    return date_parsed.strftime('%d %B %Y')
+
+// Function to handle errors
+async function handleError(chatId, error) {
+  console.error('Error:', error);
+  let errorMessage = 'حصل خطأ غير متوقع يا صاحبي 😅 ممكن نجرب تاني بعد شوية؟';
+  
+  if (error.response && error.response.status) {
+    switch (error.response.status) {
+      case 400:
+        errorMessage = 'معلش، الطلب بتاعك مش صح. ممكن تشرح أكتر أو تجرب بطريقة تانية؟';
+        break;
+      case 401:
+        errorMessage = 'حصلت مشكلة في الصلاحيات. هبلغ المطورين وهيصلحوها قريب إن شاء الله.';
+        break;
+      case 404:
+        errorMessage = 'للأسف مش لاقي اللي بتدور عليه. ممكن تجرب حاجة تانية؟';
+        break;
+      case 429:
+        errorMessage = 'بطء شوية يا صاحبي! إنت بتستعمل البوت كتير أوي. استنى كام دقيقة وجرب تاني.';
+        break;
+      case 500:
+        errorMessage = 'في مشكلة في السيرفر بتاعنا. هنصلحها قريب، جرب تاني بعد شوية.';
+        break;
+    }
+  }
+  
+  await bot.sendMessage(chatId, errorMessage);
+  logError(error);
+}
+
+// Error logging function
+function logError(error) {
+  const errorLog = `${new Date().toISOString()}: ${error.stack}\n\n`;
+  fs.appendFile('error_log.txt', errorLog, (err) => {
+    if (err) console.error('Error writing to log file:', err);
+  });
+}
+
+// Handle unexpected errors
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  logError(error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logError(new Error(reason));
+});
 
 
-def main():
-    updater = Updater(BOT_TOKEN)
-    dispatcher = updater.dispatcher
-
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-
-    updater.start_polling()
-    updater.idle()
 
 
-if __name__ == '__main__':
-    main()
+
+
+// Function to provide more evidence
+async function provideMoreEvidence(originalResponse, context) {
+  try {
+    const evidencePrompt = `بناءً على الرد السابق: "${originalResponse}" والسياق: "${context}", قدم كن اكثر إقناعًا وتفاعلًا باللهجة المصرية العامية.`;
+    const result = await model.generateContent(evidencePrompt);
+    return result.response.text();
+  } catch (error) {
+    console.error('Error providing more evidence:', error);
+    return originalResponse;
+  }
+}
+
+// Function to correct spelling
+async function correctSpelling(query) {
+  try {
+    const correctionPrompt = `صحح الإملاء في هذه الجملة باللغة العربية: "${query}"`;
+    const result = await model.generateContent(correctionPrompt);
+    return result.response.text();
+  } catch (error) {
+    console.error('Error correcting spelling:', error);
+    return query;  // Return original query if correction fails
+  }
+}
+
+// Function to reformulate prompt
+async function reformulatePrompt(prompt) {
+  try {
+    const reformulationPrompt = `أعد صياغة هذا السؤال بطريقة مختلفة للحصول على إجابة أفضل: "${prompt}"`;
+    const result = await model.generateContent(reformulationPrompt);
+    return result.response.text();
+  } catch (error) {
+    console.error('Error reformulating prompt:', error);
+    return prompt;  // Return original prompt if reformulation fails
+  }
+}
+
+// Function to handle message deletion
+async function handleDeleteMessages(chatId, messageText) {
+  const parts = messageText.split(' ');
+  let count = 1;
+
+  if (parts.length > 2 && parts[1] === 'آخر' && !isNaN(parts[2])) {
+    count = parseInt(parts[2]);
+  }
+
+  const chatMessageList = chatMessages.get(chatId) || [];
+  const messagesToDelete = chatMessageList.slice(-count);
+
+  for (const message of messagesToDelete) {
+    try {
+      await bot.deleteMessage(chatId, message.messageId);
+    } catch (error) {
+      console.error('Error deleting message:', error);
+    }
+  }
+
+  chatMessages.set(chatId, chatMessageList.slice(0, -count));
+  await bot.sendMessage(chatId, `تم مسح آخر ${count} رسالة يا باشا! 😎`);
+}
+
+// Function to send random images
+async function sendRandomImages(chatId) {
+  const topics = ['طبيعة', 'حيوانات', 'طعام', 'سيارات', 'عمارة'];
+  const randomTopic = topics[Math.floor(Math.random() * topics.length)];
+  
+  try {
+    const images = await searchImages(randomTopic, 5);
+    if (images.length > 0) {
+      await bot.sendMessage(chatId, `شوف الصور الجميلة دي عن ${randomTopic}! 😍`);
+      for (const image of images) {
+        await bot.sendPhoto(chatId, image.link, { caption: image.title });
+      }
+    } else {
+      await bot.sendMessage(chatId, "للأسف مش لاقي صور حلوة دلوقتي، ممكن نجرب تاني بعدين؟ 😅");
+    }
+  } catch (error) {
+    console.error('Error sending random images:', error);
+    await bot.sendMessage(chatId, "حصل خطأ في إرسال الصور العشوائية، ممكن نجرب تاني؟ 🙏");
+  }
+}
+
+
+
+
+
+// Function to download video (stream directly)
+async function downloadVideo(chatId, videoUrl, quality) {
+  try {
+    const ytdl = require('ytdl-core');
+    
+    // Get video info
+    const videoInfo = await ytdl.getInfo(videoUrl);
+    const format = ytdl.chooseFormat(videoInfo.formats, { quality: quality });
+    
+    if (!format) {
+      throw new Error(`No format found with quality: ${quality}`);
+    }
+
+    const stream = ytdl(videoUrl, { format: format });
+
+    // Get the video title and extension
+    const title = videoInfo.videoDetails.title;
+    const fileExtension = format.container;
+    const fileName = `${title}.${fileExtension}`;
+
+    await bot.sendMessage(chatId, `جاري إرسال الفيديو... ⏳`);
+
+    // Send the video stream to the user as a file
+    await bot.sendDocument(chatId, stream, {
+      filename: fileName, 
+      caption: `تم تحميل الفيديو بنجاح! 🎊\nالعنوان: ${title}\nالجودة: ${format.qualityLabel || quality}`,
+    });
+  } catch (error) {
+    console.error('Error downloading video:', error);
+    await bot.sendMessage(chatId, `معلش يا صاحبي، حصلت مشكلة في تحميل الفيديو. ممكن نجرب تاني بعدين؟ 😅`);
+  }
+}
+
+// Function to download MP3
+async function downloadMp3(chatId, videoUrl) {
+  try {
+    const ytdl = require('ytdl-core');
+    
+    // Get video info
+    const videoInfo = await ytdl.getInfo(videoUrl);
+    const format = ytdl.chooseFormat(videoInfo.formats, { filter: 'audioonly', quality: 'highestaudio' });
+    
+    if (!format) {
+      throw new Error('No audio format found');
+    }
+
+    const stream = ytdl(videoUrl, { format: format });
+
+    // Get the video title
+    const title = videoInfo.videoDetails.title;
+
+    // Generate the filename
+    const filename = `${title}.mp3`;
+
+    await bot.sendMessage(chatId, `جاري إرسال الصوت... ⏳`);
+
+    // Send the audio stream to the user as a file
+    await bot.sendDocument(chatId, stream, {
+      filename: filename,
+      caption: `تم تحميل الصوت بنجاح! 🎊\nالعنوان: ${title}`,
+    });
+  } catch (error) {
+    console.error('Error downloading MP3:', error);
+    await bot.sendMessage(chatId, `معلش يا صاحبي، حصلت مشكلة في تحميل الصوت. ممكن نجرب تاني بعدين؟ 😅`);
+  }
+}
+
+
+
+
+
+
+
+
+
+
+// Error logging function
+function logError(error) {
+  const errorLog = `${new Date().toISOString()}: ${error.stack}\n\n`;
+  fs.appendFile('error_log.txt', errorLog, (err) => {
+    if (err) console.error('Error writing to log file:', err);
+  });
+}
+
+// Handle unexpected errors
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  logError(error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logError(new Error(reason));
+});
+
+// Start the bot
+bot.on('polling_error', (error) => {
+  console.error('Polling error:', error);
+  logError(error);
+});
+
+console.log('البوت شغال يا معلم وجاهز للخدمة! 🚀 يلا نبدأ نكتشف الدنيا مع بعض! 😎');
+
+
+
+// Function to handle Instagram link
+async function handleInstagramLink(chatId, link) {
+  try {
+    // Fetch the HTML content of the Instagram post page
+    const response = await axios.get(link);
+    const $ = cheerio.load(response.data);
+    const imageUrl = $('#react-root > div > div > div.y-7b68o.c-3.d-l.r-3.l-83k.f-3f.r-35d.r-j710o.r-e18o.r-u90i.f-19a.f-295m.r-4oeb8h.r-1o4z17t > div > div.t4zsdfr.l-3m33y > div.k-aig9u.q834n.u05u545g.o9wrz34h.i7vwt2t9.h17z76i2.wtwu6f.owtwnj.r-4oeb8h.j06uop > div.n-f07yl.r-97d5n2.i93670m > div > div > div > div > img').attr('src');
+
+    if (imageUrl) {
+      // Send the photo directly
+      await bot.sendPhoto(chatId, imageUrl, { caption: 'إليك الصورة من انستقرام 👍' });
+    } else {
+      await bot.sendMessage(chatId, "معلش مش قادر أفتح الصورة دي.");
+    }
+  } catch (error) {
+    console.error('Error handling Instagram link:', error);
+    await bot.sendMessage(chatId, 'حصل خطأ أثناء محاولة تحميل الصورة 😕 ممكن تحاول مرة ثانية بعد شوية؟');
+  }
+}
