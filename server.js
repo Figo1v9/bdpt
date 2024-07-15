@@ -7,6 +7,7 @@ const moment = require('moment');
 const ytdl = require('ytdl-core');
 const cheerio = require('cheerio');
 const phoneUtil = require('google-libphonenumber').PhoneNumberUtil.getInstance();
+const wikipedia = require('wikipedia');
 moment.locale('ar');
 
 // Configuration
@@ -14,129 +15,6 @@ const BOT_TOKEN = '7113884971:AAFb8mmF1gJ_eppRv0uNqqIrPwCoEhagsBg';
 const GEMINI_API_KEY = 'AIzaSyDxwXC0X5AESxS_bs4C-449HRGXB9i64kk';
 const SEARCH_ENGINE_ID = 'aac380b0a966e3f52';
 const MIKA_IMAGE_URL = 'https://i.ibb.co/ZHzqs9G/Untitled-1.jpg';
-
-
-
-
-
-
-
-
- 
-
-// ... (rest of the existing setup code)
-
-// Function to handle phone number lookup
-async function handlePhoneLookup(chatId, phoneNumber) {
-  let searchMessage;
-  try {
-    // Send "جاري البحث" message
-    searchMessage = await bot.sendMessage(chatId, 'جاري البحث... ⏳');
-
-    // Parse phone number to get country code
-    const parsedNumber = phoneUtil.parse(phoneNumber);
-    const countryCode = phoneUtil.getRegionCodeForNumber(parsedNumber);
-
-    const response = await axios.get(`https://api4.truecaller.com/v1/search`, {
-      params: {
-        countryCode: countryCode,
-        phoneNumber: phoneNumber,
-        type: 4
-      },
-      headers: {
-        'Authorization': `Bearer ${TRUECALLER_API_KEY}`
-      }
-    });
-
-    const data = response.data;
-    if (data && data.data && data.data[0]) {
-      const info = data.data[0];
-      const name = info.name || 'غير معروف';
-      const country = info.countryCode || countryCode || 'غير معروف';
-      const lastSeen = info.lastSeen ? moment(info.lastSeen).format('DD/MM/YYYY HH:mm') : 'غير متاح';
-      const imageUrl = info.image || MIKA_IMAGE_URL; // Use default image if not available
-      const email = info.email || 'غير متاح';
-
-      // Create a nicely formatted message
-      const message = `
-🔍 *معلومات الرقم*
-
-📞 الرقم: \`${phoneNumber}\`
-👤 الاسم: ${name}
-🌍 الدولة: ${country}
-📧 البريد الإلكتروني: ${email}
-⏱ آخر ظهور: ${lastSeen}
-
-تم البحث باستخدام Truecaller 📱
-      `;
-
-      // Delete the "جاري البحث" message
-      await bot.deleteMessage(chatId, searchMessage.message_id);
-
-      // Send the image
-      await bot.sendPhoto(chatId, imageUrl, { caption: message, parse_mode: 'Markdown' });
-    } else {
-      // Delete the "جاري البحث" message
-      await bot.deleteMessage(chatId, searchMessage.message_id);
-      await bot.sendMessage(chatId, 'معلش، مش لاقي معلومات عن الرقم ده 😕');
-    }
-  } catch (error) {
-    console.error('Error in phone lookup:', error);
-    // Delete the "جاري البحث" message if it exists
-    if (searchMessage) {
-      await bot.deleteMessage(chatId, searchMessage.message_id);
-    }
-    await bot.sendMessage(chatId, 'حصل خطأ أثناء البحث عن معلومات الرقم. ممكن تجرب تاني؟ 🙏');
-  }
-}
-
-// Modify the existing handleMessage function to include the new phrase
-async function handleMessage(msg, chatId, messageText, userId) {
-  try {
-    bot.sendChatAction(chatId, 'typing');
-
-    if (messageText && messageText.toLowerCase().startsWith('رقم ')) {
-      const phoneNumber = messageText.split(' ')[1]; // Get the second word as the phone number
-      if (phoneNumber && /^\d+$/.test(phoneNumber)) { // Check if it's a valid number
-        await handlePhoneLookup(chatId, phoneNumber);
-      } else {
-        await bot.sendMessage(chatId, 'من فضلك اكتب الرقم بشكل صحيح، مثال: رقم 01281605832');
-      }
-    } else if (messageText && messageText.toLowerCase().startsWith('امسح')) {
-      await handleDeleteMessages(chatId, messageText);
-    } else if (messageText && messageText.toLowerCase().startsWith('صورة')) {
-      await handleImageRequest(chatId, messageText);
-    } else if (messageText && messageText.toLowerCase() === 'صورة أخرى') {
-      await handleNextImage(chatId);
-    } else if (messageText && messageText.toLowerCase() === 'صور عشوائية') {
-      await sendRandomImages(chatId);
-    } else if (messageText && messageText.toLowerCase().startsWith('تقمص شخصية')) {
-      await handleRolePlay(chatId, messageText);
-    } else if (messageText && messageText.toLowerCase().startsWith('فيديو')) {
-      await handleVideoRequest(chatId, messageText);
-    } else if (messageText) {
-      // ... (rest of the existing message handling code)
-    }
-  } catch (error) {
-    console.error('Error in handleMessage:', error);
-    await handleError(chatId, error);
-  }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // Setup Telegram bot
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -159,9 +37,9 @@ const messageLocks = new Map();
 const lastImageSearch = new Map();
 const userRoles = new Map();
 const lastImageSent = new Map();
-const imageSearchIndex = new Map(); // Track the image search index for each chat
+const imageSearchIndex = new Map();
 
-// Improved function to handle messages
+// Main message handler
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   try {
@@ -197,12 +75,15 @@ bot.on('message', async (msg) => {
   }
 });
 
-// Improved function to handle messages
+// Function to handle messages
 async function handleMessage(msg, chatId, messageText, userId) {
   try {
     bot.sendChatAction(chatId, 'typing');
 
-    if (messageText && messageText.toLowerCase().startsWith('امسح')) {
+    if (messageText && messageText.toLowerCase().startsWith('ويكي ')) {
+      const query = messageText.slice(5).trim();
+      await handleWikiRequest(chatId, query);
+    } else if (messageText && messageText.toLowerCase().startsWith('امسح')) {
       await handleDeleteMessages(chatId, messageText);
     } else if (messageText && messageText.toLowerCase().startsWith('صورة')) {
       await handleImageRequest(chatId, messageText);
@@ -214,6 +95,13 @@ async function handleMessage(msg, chatId, messageText, userId) {
       await handleRolePlay(chatId, messageText);
     } else if (messageText && messageText.toLowerCase().startsWith('فيديو')) {
       await handleVideoRequest(chatId, messageText);
+    } else if (messageText && messageText.toLowerCase().startsWith('رقم ')) {
+      const phoneNumber = messageText.split(' ')[1];
+      if (phoneNumber && /^\d+$/.test(phoneNumber)) {
+        await handlePhoneLookup(chatId, phoneNumber);
+      } else {
+        await bot.sendMessage(chatId, 'من فضلك اكتب الرقم بشكل صحيح، مثال: رقم 01281605832');
+      }
     } else if (messageText) {
       if (messageLocks.has(chatId) && messageLocks.get(chatId)) {
         return;
@@ -234,6 +122,128 @@ async function handleMessage(msg, chatId, messageText, userId) {
     await handleError(chatId, error);
   }
 }
+
+
+
+
+
+async function handleWikiRequest(chatId, query) {
+  try {
+    wikipedia.setLang('ar');
+    
+    const searchResults = await wikipedia.search(query);
+    if (searchResults.results.length === 0) {
+      await bot.sendMessage(chatId, "معلش يا صاحبي، مش لاقي أي معلومات عن الموضوع ده. ممكن نجرب نبحث عن حاجة تانية؟ 🤔");
+      return;
+    }
+    
+    const page = await wikipedia.page(searchResults.results[0].title);
+    const summary = await page.summary();
+    
+    let message = `<b>📚 ${summary.title}</b>\n\n`;
+    message += `${summary.extract}\n\n`;
+    
+    const categories = await page.categories();
+    if (categories.length > 0) {
+      message += `<b>🏷️ التصنيفات:</b> ${categories.slice(0, 5).join('، ')}\n\n`;
+    }
+    
+    const related = await page.related();
+    if (related.length > 0) {
+      message += `<b>🔗 مواضيع ذات صلة:</b> ${related.slice(0, 5).join('، ')}\n\n`;
+    }
+    
+    message += `<a href="${summary.content_urls.desktop.page}">🌐 اقرأ المزيد على ويكيبيديا</a>`;
+    
+    if (summary.thumbnail) {
+      await bot.sendPhoto(chatId, summary.thumbnail.source, { 
+        caption: message,
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🔍 ابحث عن معلومات إضافية", callback_data: `more_info_${summary.title}` }],
+            [{ text: "🎨 اعرض صور ذات صلة", callback_data: `related_images_${summary.title}` }]
+          ]
+        }
+      });
+    } else {
+      await bot.sendMessage(chatId, message, { 
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🔍 ابحث عن معلومات إضافية", callback_data: `more_info_${summary.title}` }],
+            [{ text: "🎨 اعرض صور ذات صلة", callback_data: `related_images_${summary.title}` }]
+          ]
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error in Wikipedia search:', error);
+    await bot.sendMessage(chatId, 'معلش يا معلم، حصلت مشكلة في البحث. ممكن نجرب تاني بعد شوية؟ 😅');
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+async function searchRelatedImages(query, count = 5) {
+  try {
+    const response = await customSearch.cse.list({
+      auth: GEMINI_API_KEY,
+      cx: SEARCH_ENGINE_ID,
+      q: query,
+      searchType: 'image',
+      num: count
+    });
+
+    return response.data.items || [];
+  } catch (error) {
+    console.error('Error searching for images:', error);
+    return [];
+  }
+}
+
+// تحديث هاندلر الـ callback_query
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const data = query.data;
+
+  if (data.startsWith('more_info_')) {
+    const title = data.split('more_info_')[1];
+    // هنا يمكنك إضافة منطق للبحث عن معلومات إضافية
+    await bot.sendMessage(chatId, `جاري البحث عن معلومات إضافية عن ${title}... 🕵️‍♂️`);
+  } else if (data.startsWith('related_images_')) {
+    const title = data.split('related_images_')[1];
+    await bot.sendMessage(chatId, `جاري البحث عن صور ذات صلة بـ ${title}... 🖼️`);
+    
+    const images = await searchRelatedImages(title);
+    if (images.length > 0) {
+      for (let image of images) {
+        await bot.sendPhoto(chatId, image.link, { caption: image.title || 'صورة ذات صلة' });
+      }
+    } else {
+      await bot.sendMessage(chatId, 'للأسف، مش لاقي صور ذات صلة. 😕');
+    }
+  }
+
+  await bot.answerCallbackQuery(query.id);
+});
+
+
+
+
+
 
 // Function to handle mentions or replies
 async function handleMentionOrReply(msg, chatId, userId) {
@@ -324,7 +334,7 @@ async function sendMikaImage(chatId) {
   await bot.sendPhoto(chatId, MIKA_IMAGE_URL, { caption: 'مسا! 😘' });
 }
 
-// Improved function to handle image messages
+// Function to handle image messages
 async function handleImageMessage(chatId, msg) {
   try {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
@@ -351,7 +361,7 @@ async function handleImageMessage(chatId, msg) {
   }
 }
 
-// Improved function to handle image requests
+// Function to handle image requests
 async function handleImageRequest(chatId, messageText) {
   const parts = messageText.split(' ');
   let numImages = 1;
@@ -411,7 +421,6 @@ async function sendImageGallery(chatId, images, query) {
     await handleError(chatId, error);
   }
 }
-
 
 
 // Function to send next image
