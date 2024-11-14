@@ -49,12 +49,14 @@ export default function AdminPanel() {
   );
 
   const handleAddQuestion = async () => {
+    // التحقق من أن جميع الحقول مملوءة
     if (!newQuestion.text || newQuestion.options.some(opt => !opt)) {
       toast.error('Please fill in all fields');
       return;
     }
 
     try {
+      // إضافة السؤال الجديد
       const addedQuestion = await questionsApi.addQuestion({
         text: newQuestion.text,
         subject: selectedSubject,
@@ -64,7 +66,10 @@ export default function AdminPanel() {
       });
 
       if (addedQuestion) {
-        setQuestions([addedQuestion, ...questions]);
+        // إعادة تحميل جميع الأسئلة من قاعدة البيانات
+        await loadQuestions();
+        
+        // إعادة تعيين نموذج السؤال الجديد
         setNewQuestion({
           text: '',
           subject: selectedSubject,
@@ -72,6 +77,8 @@ export default function AdminPanel() {
           correctAnswer: 0,
           explanation: ''
         });
+        
+        // رسالة نجاح
         toast.success('Question added successfully');
       }
     } catch (error) {
@@ -87,7 +94,8 @@ export default function AdminPanel() {
     try {
       const success = await questionsApi.deleteQuestion(id);
       if (success) {
-        setQuestions(questions.filter(q => q.id !== id));
+        // إعادة تحميل الأسئلة بعد الحذف
+        await loadQuestions();
         toast.success('Question deleted successfully');
       }
     } catch (error) {
