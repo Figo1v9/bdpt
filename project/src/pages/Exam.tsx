@@ -1,34 +1,18 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store';
 import { Timer } from '../components/Timer';
-import { LoadingSpinner } from '../components/LoadingSpinner';
-import { TopScores } from '../components/TopScores';
-import { Check, X, AlertTriangle } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 
 export function Exam() {
   const navigate = useNavigate();
   const { subjectId } = useParams();
-  const { subjects, currentStudent, addExamResult, getTopScores } = useStore();
+  const { subjects, currentStudent, updateSubjects } = useStore();
   
+  const subject = subjects.find((s) => s.id === subjectId);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<number[]>([]);
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [topScores, setTopScores] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const subject = subjects.find((s) => s.id === subjectId);
-
-  useEffect(() => {
-    const loadTopScores = async () => {
-      if (subjectId && isSubmitted) {
-        const scores = await getTopScores(subjectId);
-        setTopScores(scores);
-      }
-    };
-    loadTopScores();
-  }, [subjectId, isSubmitted, getTopScores]);
 
   if (!subject || !currentStudent) {
     navigate('/subjects');
@@ -42,11 +26,6 @@ export function Exam() {
     const newAnswers = [...answers];
     newAnswers[currentQuestionIndex] = optionIndex;
     setAnswers(newAnswers);
-
-    // Auto-advance to next question after short delay
-    if (currentQuestionIndex < subject.questions.length - 1) {
-      setTimeout(() => handleNext(), 500);
-    }
   };
 
   const handleNext = () => {
@@ -65,63 +44,34 @@ export function Exam() {
     handleSubmit();
   }, []);
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (isSubmitted) return;
-    setLoading(true);
-    setError(null);
 
-    try {
-      let score = 0;
-      answers.forEach((answer, index) => {
-        if (answer === subject.questions[index].correctAnswer) {
-          score++;
-        }
-      });
+    let score = 0;
+    answers.forEach((answer, index) => {
+      if (answer === subject.questions[index].correctAnswer) {
+        score++;
+      }
+    });
 
-      const finalScore = (score / subject.questions.length) * 100;
+    const finalScore = (score / subject.questions.length) * 100;
 
-      await addExamResult({
-        subjectId: subject.id,
-        score: finalScore,
-        date: new Date().toISOString(),
-        answers: answers,
-        studentId: currentStudent.id,
-        studentName: currentStudent.name,
-        timestamp: Date.now(),
-      });
+    const updatedStudent = {
+      ...currentStudent,
+      examResults: [
+        ...currentStudent.examResults,
+        {
+          subjectId: subject.id,
+          score: finalScore,
+          date: new Date().toISOString(),
+          answers: answers,
+        },
+      ],
+    };
 
-      setIsSubmitted(true);
-    } catch (err) {
-      setError('حدث خطأ أثناء حفظ النتيجة');
-    } finally {
-      setLoading(false);
-    }
+    useStore.setState({ currentStudent: updatedStudent });
+    setIsSubmitted(true);
   };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <LoadingSpinner size="lg" message="جاري حفظ النتيجة..." />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="max-w-4xl mx-auto">
-        <div className="bg-red-900/20 border border-red-500 rounded-lg p-6 text-center">
-          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <p className="text-red-500 mb-4">{error}</p>
-          <button
-            onClick={() => navigate('/subjects')}
-            className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-md transition duration-200"
-          >
-            العودة للمواد
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   if (subject.questions.length === 0) {
     return (
@@ -147,15 +97,11 @@ export function Exam() {
     const percentage = (score / subject.questions.length) * 100;
 
     return (
-      <div className="max-w-4xl mx-auto space-y-8">
+      <div className="max-w-4xl mx-auto">
         <div className="bg-gray-800 rounded-lg shadow-xl p-8">
           <div className="text-center mb-8">
             <h2 className="text-2xl font-bold mb-4">نتيجة الاختبار</h2>
-            <div className={`text-6xl font-bold mb-6 ${
-              percentage >= 70 ? 'text-green-500' : 
-              percentage >= 50 ? 'text-yellow-500' : 
-              'text-red-500'
-            }`}>
+            <div className="text-6xl font-bold text-purple-500 mb-6">
               {percentage.toFixed(1)}%
             </div>
             <p className="text-xl mb-6">
@@ -213,10 +159,6 @@ export function Exam() {
             </button>
           </div>
         </div>
-
-        {topScores.length > 0 && (
-          <TopScores scores={topScores} subjectName={subject.name} />
-        )}
       </div>
     );
   }

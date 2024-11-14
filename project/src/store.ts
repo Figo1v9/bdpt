@@ -1,21 +1,17 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Student, Subject, ExamResult } from './types';
+import { Student, Subject } from './types';
 import { db } from './firebase';
-import { collection, getDocs, doc, setDoc, onSnapshot, writeBatch, query, orderBy, limit } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 interface AppState {
   currentStudent: Student | null;
   subjects: Subject[];
-  examHistory: ExamResult[];
   setCurrentStudent: (student: Student | null) => void;
   addStudent: (name: string) => void;
   updateSubjects: (subjects: Subject[]) => void;
   initializeSubjects: () => Promise<void>;
-  addExamResult: (result: ExamResult) => Promise<void>;
-  getTopScores: (subjectId: string) => Promise<ExamResult[]>;
   loading: boolean;
-  error: string | null;
 }
 
 const defaultSubjects: Subject[] = [
@@ -26,21 +22,13 @@ const defaultSubjects: Subject[] = [
   { id: '5', name: 'قانون', questions: [], timeLimit: 30 },
 ];
 
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-let lastFetch = 0;
-let cachedSubjects: Subject[] | null = null;
-
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
       currentStudent: null,
       subjects: defaultSubjects,
-      examHistory: [],
       loading: true,
-      error: null,
-
       setCurrentStudent: (student) => set({ currentStudent: student }),
-
       addStudent: (name) =>
         set((state) => ({
           currentStudent: {
@@ -49,105 +37,36 @@ export const useStore = create<AppState>()(
             examResults: [],
           },
         })),
-
       updateSubjects: async (subjects) => {
         try {
-          set({ loading: true, error: null });
-          const batch = writeBatch(db);
-          
-          // Update in smaller chunks for better performance
-          const chunkSize = 20;
-          for (let i = 0; i < subjects.length; i += chunkSize) {
-            const chunk = subjects.slice(i, i + chunkSize);
-            chunk.forEach((subject) => {
-              const subjectRef = doc(db, 'subjects', subject.id);
-              batch.set(subjectRef, subject);
-            });
-          }
-          
-          await batch.commit();
-          cachedSubjects = subjects;
-          lastFetch = Date.now();
-          set({ subjects, loading: false });
+          // Update Firestore
+          await setDoc(doc(db, 'data', 'subjects'), { subjects });
+          set({ subjects });
         } catch (error) {
           console.error('Error updating subjects:', error);
-          set({ error: 'فشل في تحديث المواد', loading: false });
         }
       },
-
       initializeSubjects: async () => {
         try {
-          // Check cache first
-          if (cachedSubjects && Date.now() - lastFetch < CACHE_DURATION) {
-            set({ subjects: cachedSubjects, loading: false });
-            return;
-          }
-
-          set({ loading: true, error: null });
+          set({ loading: true });
           
-          // Set up real-time listener with query optimization
-          const unsubscribe = onSnapshot(
-            query(collection(db, 'subjects'), orderBy('name')),
-            (snapshot) => {
-              const subjects: Subject[] = [];
-              snapshot.forEach((doc) => {
-                subjects.push(doc.data() as Subject);
-              });
-              
-              cachedSubjects = subjects;
-              lastFetch = Date.now();
-              set({ subjects, loading: false });
-            },
-            (error) => {
-              console.error('Error fetching subjects:', error);
-              set({ error: 'فشل في تحميل المواد', loading: false });
+          // Set up real-time listener
+          const unsubscribe = onSnapshot(doc(db, 'data', 'subjects'), (doc) => {
+            if (doc.exists()) {
+              const data = doc.data();
+              set({ subjects: data.subjects, loading: false });
+            } else {
+              // If no data exists, initialize with default subjects
+              get().updateSubjects(defaultSubjects);
+              set({ loading: false });
             }
-          );
+          });
 
+          // Clean up listener on unmount
           return () => unsubscribe();
         } catch (error) {
           console.error('Error initializing subjects:', error);
-          set({ error: 'حدث خطأ في النظام', loading: false });
-        }
-      },
-
-      addExamResult: async (result: ExamResult) => {
-        try {
-          const { currentStudent } = get();
-          if (!currentStudent) return;
-
-          await setDoc(
-            doc(db, 'examResults', `${currentStudent.id}_${result.subjectId}_${Date.now()}`),
-            {
-              ...result,
-              studentId: currentStudent.id,
-              studentName: currentStudent.name,
-              timestamp: Date.now(),
-            }
-          );
-
-          set((state) => ({
-            examHistory: [...state.examHistory, result],
-          }));
-        } catch (error) {
-          console.error('Error saving exam result:', error);
-          set({ error: 'فشل في حفظ نتيجة الاختبار' });
-        }
-      },
-
-      getTopScores: async (subjectId: string) => {
-        try {
-          const topScoresQuery = query(
-            collection(db, 'examResults'),
-            orderBy('score', 'desc'),
-            limit(10)
-          );
-          
-          const snapshot = await getDocs(topScoresQuery);
-          return snapshot.docs.map(doc => doc.data() as ExamResult);
-        } catch (error) {
-          console.error('Error fetching top scores:', error);
-          return [];
+          set({ loading: false });
         }
       },
     }),
