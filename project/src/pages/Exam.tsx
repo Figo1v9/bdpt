@@ -7,13 +7,14 @@ import { Check, X } from 'lucide-react';
 export function Exam() {
   const navigate = useNavigate();
   const { subjectId } = useParams();
-  const { subjects, currentStudent, updateSubjects } = useStore();
+  const { subjects, currentStudent } = useStore();
   
   const subject = subjects.find((s) => s.id === subjectId);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<number[]>([]);
   const [isSubmitted, setIsSubmitted] = useState(false);
 
+  // التحقق من وجود المادة والطالب
   if (!subject || !currentStudent) {
     navigate('/subjects');
     return null;
@@ -23,9 +24,11 @@ export function Exam() {
 
   const handleAnswer = (optionIndex: number) => {
     if (isSubmitted) return;
-    const newAnswers = [...answers];
-    newAnswers[currentQuestionIndex] = optionIndex;
-    setAnswers(newAnswers);
+    setAnswers(prev => {
+      const newAnswers = [...prev];
+      newAnswers[currentQuestionIndex] = optionIndex;
+      return newAnswers;
+    });
   };
 
   const handleNext = () => {
@@ -73,6 +76,7 @@ export function Exam() {
     setIsSubmitted(true);
   };
 
+  // عرض رسالة عندما لا توجد أسئلة
   if (subject.questions.length === 0) {
     return (
       <div className="max-w-4xl mx-auto">
@@ -90,6 +94,7 @@ export function Exam() {
     );
   }
 
+  // عرض نتيجة الاختبار
   if (isSubmitted) {
     const score = answers.reduce((acc, answer, index) => {
       return answer === subject.questions[index].correctAnswer ? acc + 1 : acc;
@@ -109,6 +114,7 @@ export function Exam() {
             </p>
           </div>
 
+          {/* عرض الإجابات */}
           <div className="space-y-8">
             {subject.questions.map((question, qIndex) => (
               <div key={qIndex} className="bg-gray-700 rounded-lg p-6">
@@ -163,6 +169,7 @@ export function Exam() {
     );
   }
 
+  // عرض الاختبار
   return (
     <div className="max-w-4xl mx-auto">
       <div className="bg-gray-800 rounded-lg shadow-xl p-8">
